@@ -8,6 +8,7 @@ Linear をタスクの正本とし、タイトル・状態・期限・担当の�
 - 既存の Life KB を変更: [Google Tasks版からの移行](#google-tasks版からの移行)
 - iPhoneで表示: [iPhoneでの表示](#iphoneでの表示)
 - 編集・検証: [Local development with clasp](#local-development-with-clasp)
+- mainへのマージで自動反映: [GitHub Actions](#github-actions)
 - エラー対応: [Troubleshooting](#troubleshooting)
 
 ## Architecture
@@ -51,9 +52,13 @@ iPhone カレンダー
 
 ## Schedule
 
-Asia/Tokyo の **07:00 / 12:00 / 18:00 頃**に同期します。Apps Script の時間主導型トリガーのため、厳密な時刻は保証されません。
+Asia/Tokyo の **06:00 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 頃**に、約3時間おき・1日6回同期します。Apps Script の時間主導型トリガーのため、厳密な時刻は保証されません。
 
-時刻は `CONFIG.SYNC_HOURS` に集約しています。変更後に `resetSyncTriggers()` を実行すると、同期用トリガーだけを作り直せます。停止する場合は `removeSyncTriggers()` を実行します。
+時刻は `CONFIG.SYNC_HOURS` に集約しています。コード反映後、既存の定期同期が次に成功すると時刻・タイムゾーンの変更を検知し、同期用トリガーだけを新しい時刻の6件に作り直します。初回の変更検知も、その時点で登録されている旧時刻のトリガーを待ちます。直ちに切り替える場合は、既存トリガーを作成したアカウントで `resetSyncTriggers()` を実行します。
+
+停止する場合は `removeSyncTriggers()` を実行します。停止中・未セットアップで同期用トリガーがない場合、コード反映や手動同期では自動復活しません。新しいトリガーの作成に失敗した場合は作成途中のものを削除して旧トリガーを残し、次回同期で再試行します。
+
+反映済みの時刻はユーザー プロパティ `SYNC_TRIGGER_SCHEDULE` に自動記録します。アカウントごとの管理情報で、手動設定は不要です。別アカウントのトリガーは変更できません。
 
 ## Setup
 
@@ -111,16 +116,16 @@ Apps Script の **プロジェクトの設定 → スクリプト プロパテ�
 
 関数を **`setupSync`** に切り替えて実行します。追加の権限承認が出た場合は承認します。
 
-Linear を読み取り、専用カレンダーの作成または接続確認を行い、同期用の既存トリガーを削除して初回同期を実行します。成功後に新しいトリガーを3件作成します。
+Linear を読み取り、専用カレンダーの作成または接続確認を行い、同期用の既存トリガーを削除して初回同期を実行します。成功後に新しいトリガーを6件作成します。
 
 完了後は次を確認します。
 
 - ログに `Setup complete.` が表示されている。
 - Google カレンダーに `Linear` があり、期限当日の終日イベントが表示される。
-- 左側の **トリガー**（時計アイコン）に `syncLinearToGoogleCalendar` が3件ある。
+- 左側の **トリガー**（時計アイコン）に `syncLinearToGoogleCalendar` が6件ある。
 - スクリプト プロパティに `GOOGLE_CALENDAR_ID` が保存されている。
 
-同じアカウントで再実行しても、保存済みカレンダーを再利用し、同期用トリガーを3件に揃えます。通常のコード反映のたびに実行する必要はありません。
+同じアカウントで再実行しても、保存済みカレンダーを再利用し、同期用トリガーを6件に揃えます。通常のコード反映のたびに実行する必要はありません。
 
 ## Google Tasks版からの移行
 
@@ -130,8 +135,8 @@ Linear を読み取り、専用カレンダーの作成または接続確認を�
 2. 新しい `コード.js` と `appsscript.json` を反映します。ローカルからは差分を確認後に `clasp push` を実行します。
 3. サービスが `Tasks` から `Calendar`（v3）へ切り替わっていることを確認します。既存の `LINEAR_API_KEY` はそのまま使います。
 4. `previewLinearTasks()` を実行し、Calendar のアクセス権限を再承認して同期対象を確認します。
-5. `setupSync()` を実行します。旧 `syncLinearToGoogleTasks` と新 `syncLinearToGoogleCalendar` の既存トリガーを整理し、初回同期後に新しいものを3件作成します。
-6. Calendar のイベントと新トリガー3件を確認し、以下の手順で iPhone に表示します。
+5. `setupSync()` を実行します。旧 `syncLinearToGoogleTasks` と新 `syncLinearToGoogleCalendar` の既存トリガーを整理し、初回同期後に新しいものを6件作成します。
+6. Calendar のイベントと新トリガー6件を確認し、以下の手順で iPhone に表示します。
 
 本リポジトリのローカルテストは本番の同期を実行しません。移行は上記手順を実施した時点で反映されます。
 
@@ -179,7 +184,39 @@ clasp show-file-status
 clasp push
 ```
 
-`.claspignore` は `コード.js` と `appsscript.json` だけをアップロード対象にします。テストやドキュメントは送信しません。スクリプト プロパティとトリガーは Google 側に残り、clone / pull / push で設定し直す必要はありません。ただし今回の Tasks 版からの移行では再セットアップが必要です。
+`.claspignore` は `コード.js` と `appsscript.json` だけをアップロード対象にします。テストやドキュメントは送信しません。スクリプト プロパティとトリガーは Google 側に残ります。同期時刻を変更した場合は次の定期同期成功時に自動再設定されます。Tasks 版からの移行では `setupSync()` を実行します。
+
+## GitHub Actions
+
+`.github/workflows/apps-script.yml` が以下を実行します。
+
+- main向けPR: 構文チェックとローカルテスト。Googleの認証情報は使用しません。
+- mainへのpush（PRのマージを含む）: 同じチェックの成功後、`clasp push --force` で既存のApps Scriptへコードとマニフェストを反映します。
+- 手動再実行: Actionsの **Apps Script → Run workflow** でmainを選択します。main以外からの実行ではテストのみ行います。
+
+反映先は `.clasp.json` の Script IDです。Node.js 24とclasp 3.4.1を使用し、アップロード対象は `.claspignore` で制限します。本番へのpushは直列に実行し、待機中にmainが更新された古いコミットは反映せず、新しいコミットの実行に任せます。
+
+### 初回の認証設定
+
+1. 対象Apps Scriptを編集できるGoogleアカウントで `clasp login` し、Apps Script APIを有効にします。
+2. リポジトリの **Settings → Secrets and variables → Actions** に、Repository secret **`CLASPRC_JSON`** を登録します。値はclaspの認証JSONです。複数アカウントを保存している場合は対象の `default` アカウントだけを含めます。
+3. ワークフローをmainへマージし、Actionsで `test` と `deploy` の成功を確認します。
+
+CLIから登録する場合は、対象アカウントだけの認証JSONを含むファイルを標準入力で渡します。認証情報をチャットやGit、コマンド引数へ貼り付けないでください。
+
+```sh
+gh secret set CLASPRC_JSON --repo skanehira1126/my-google-apps-scripts < <CLASP_AUTH_FILE>
+```
+
+認証JSONの `tokens.default` には `client_id`、`client_secret`、`type`、`refresh_token` を含めます。`access_token` と `id_token` は不要です。ワークフローはsecretを一時ファイルに復元して認証し、処理終了時に削除します。`LINEAR_API_KEY` と `GOOGLE_CALENDAR_ID` は引き続きApps Scriptのスクリプト プロパティに保存し、GitHubへ移しません。
+
+このOAuth認証はGoogleアカウントのApps Scriptへのアクセス権を持つため、GitHub Actionsのsecretとして管理します。失効した場合は再ログインしてsecretを更新し、mainのワークフローを再実行します。Googleの[claspによるCI/CD手順](https://developers.google.com/apps-script/guides/clasp#ci/cd_for_apps_script_with_clasp_and_github_actions)も参照してください。
+
+### 反映のタイミングと運用
+
+マージ後はGitHubのmainを編集元にします。Apps Scriptエディタ側の変更は次の自動反映で上書きされるため、必要な変更は先にローカルへ取り込んでPRに含めます。自動反映は関数を実行しません。カレンダーの内容と同期時刻は次の定期同期成功時に反映されます。初回の `setupSync()`、停止中からの再開、新しいGoogle権限の承認はApps Scriptエディタで行います。
+
+Apps Script APIには[トリガーを作成できない制約](https://developers.google.com/apps-script/api/how-tos/execute#limitations)があるため、GitHub Actionsから `clasp run resetSyncTriggers` は実行しません。実APIの権限とiPhone表示はローカルテストでは検証できません。
 
 ## Git / secrets
 

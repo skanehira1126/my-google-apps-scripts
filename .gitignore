@@ -1,0 +1,7 @@
+.clasprc.json
+.clasprc.*.json
+.env
+.env.*
+credentials*.json
+client_secret*.json
+node_modules/

@@ -4,7 +4,7 @@ const CONFIG = Object.freeze({
   LINEAR_PROJECT_ID: '4eaf63bf-9834-40ff-8358-e2407127b975', // Life
   GOOGLE_CALENDAR_NAME: 'Linear',
   TIMEZONE: 'Asia/Tokyo',
-  SYNC_HOURS: [7, 12, 18],
+  SYNC_HOURS: [6, 9, 12, 15, 18, 21],
   SYNC_SOURCE: 'linear-life-calendar-v1',
 });
 
@@ -60,11 +60,37 @@ function removeSyncTriggers() {
 }
 
 function installSyncTriggers_() {
-  removeSyncTriggers_();
-  for (const hour of CONFIG.SYNC_HOURS) {
-    ScriptApp.newTrigger('syncLinearToGoogleCalendar')
-      .timeBased().atHour(hour).nearMinute(0).everyDays(1)
-      .inTimezone(CONFIG.TIMEZONE).create();
+  const handlers = ['syncLinearToGoogleTasks', 'syncLinearToGoogleCalendar'];
+  const previous = ScriptApp.getProjectTriggers()
+    .filter((trigger) => handlers.includes(trigger.getHandlerFunction()));
+  const created = [];
+  try {
+    // Keep the current schedule alive if creating its replacement fails.
+    for (const hour of CONFIG.SYNC_HOURS) {
+      created.push(ScriptApp.newTrigger('syncLinearToGoogleCalendar')
+        .timeBased().atHour(hour).nearMinute(0).everyDays(1)
+        .inTimezone(CONFIG.TIMEZONE).create());
+    }
+  } catch (error) {
+    created.forEach((trigger) => ScriptApp.deleteTrigger(trigger));
+    throw error;
+  }
+  previous.forEach((trigger) => ScriptApp.deleteTrigger(trigger));
+  PropertiesService.getUserProperties().setProperty('SYNC_TRIGGER_SCHEDULE',
+    `${CONFIG.TIMEZONE}:${CONFIG.SYNC_HOURS.join(',')}`);
+}
+
+function updateSyncTriggersIfNeeded_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const current = triggers.filter((trigger) => trigger.getHandlerFunction() === 'syncLinearToGoogleCalendar');
+  // A manual sync must not restart a schedule the user has stopped.
+  if (current.length === 0) return;
+  const schedule = `${CONFIG.TIMEZONE}:${CONFIG.SYNC_HOURS.join(',')}`;
+  if (PropertiesService.getUserProperties().getProperty('SYNC_TRIGGER_SCHEDULE') !== schedule ||
+      current.length !== CONFIG.SYNC_HOURS.length ||
+      triggers.some((trigger) => trigger.getHandlerFunction() === 'syncLinearToGoogleTasks')) {
+    installSyncTriggers_();
+    console.log(`Sync schedule updated: ${schedule}.`);
   }
 }
 
@@ -86,6 +112,7 @@ function syncLinearToGoogleCalendar() {
     const calendarId = getGoogleCalendarId_();
     const events = listSyncedCalendarEvents_(calendarId);
     reconcileCalendar_(calendarId, issues, events);
+    updateSyncTriggersIfNeeded_();
   } finally {
     lock.releaseLock();
   }

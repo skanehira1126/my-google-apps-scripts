@@ -1,0 +1,69 @@
+name: Apps Script
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: node --check コード.js
+      - run: node --test tests/calendar-sync.test.cjs
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: apps-script-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install clasp
+        run: npm install --global @google/clasp@3.4.1 --ignore-scripts --no-audit --no-fund
+      - name: Check upload files
+        run: clasp show-file-status
+      - name: Push current main to Apps Script
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$latest_sha" != "$GITHUB_SHA" ]]; then
+            echo "Skipping an older commit; a newer main commit will be deployed."
+            exit 0
+          fi
+          if [[ -z "$CLASPRC_JSON" ]]; then
+            echo '::error::Set the CLASPRC_JSON repository secret before deploying.'
+            exit 1
+          fi
+          auth_file="$RUNNER_TEMP/clasp-auth.json"
+          trap 'rm -f "$auth_file"' EXIT
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$auth_file"
+          unset CLASPRC_JSON
+          clasp --auth "$auth_file" push --force
