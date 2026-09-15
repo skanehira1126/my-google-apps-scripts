@@ -13,14 +13,21 @@ function harness() {
   const state = {
     issues: [issue()], events: [], writes: [], logs: [], sleeps: [], calendarCreates: 0,
     properties: { LINEAR_API_KEY: '<test-key>', GOOGLE_CALENDAR_ID: 'test-calendar' },
+    userProperties: {}, triggerCreates: 0,
     triggers: [], locked: false, releases: 0, eventReads: [], linearReads: [], nextId: 0,
   };
   const context = vm.createContext({
     console: { log: (message) => state.logs.push(message) },
-    PropertiesService: { getScriptProperties: () => ({
-      getProperty: (key) => state.properties[key] || null,
-      setProperty: (key, value) => { state.properties[key] = value; },
-    }) },
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => state.properties[key] || null,
+        setProperty: (key, value) => { state.properties[key] = value; },
+      }),
+      getUserProperties: () => ({
+        getProperty: (key) => state.userProperties[key] || null,
+        setProperty: (key, value) => { state.userProperties[key] = value; },
+      }),
+    },
     LockService: { getScriptLock: () => ({
       tryLock: () => !state.locked, releaseLock: () => { state.releases++; },
     }) },
@@ -79,7 +86,11 @@ function harness() {
           timeBased: () => builder, atHour: (hour) => { trigger.hour = hour; return builder; },
           nearMinute: () => builder, everyDays: () => builder,
           inTimezone: (zone) => { trigger.zone = zone; return builder; },
-          create: () => { state.triggers.push(trigger); },
+          create: () => {
+            if (++state.triggerCreates === state.triggerCreateFailAt) throw new Error('Trigger creation failed');
+            state.triggers.push(trigger);
+            return trigger;
+          },
         };
         return builder;
       },
@@ -192,7 +203,7 @@ test('カレンダーでの日付・通知・繰り返し編集をLinearの終�
   assert.equal(state.events[0].reminders.useDefault, false);
 });
 
-test('セットアップはカレンダーを一度だけ作り、旧新の同期トリガーを3件に揃える', () => {
+test('セットアップはカレンダーを一度だけ作り、旧新の同期トリガーを6件に揃える', () => {
   const { api, state } = harness();
   delete state.properties.GOOGLE_CALENDAR_ID;
   state.triggers = ['syncLinearToGoogleTasks', 'syncLinearToGoogleCalendar', 'unrelated']
@@ -202,14 +213,80 @@ test('セットアップはカレンダーを一度だけ作り、旧新の同�
   assert.equal(state.calendarCreates, 1);
   assert.equal(state.properties.GOOGLE_CALENDAR_ID, 'created-calendar');
   assert.equal(state.events.length, 1);
-  assert.equal(state.triggers.length, 4);
+  assert.equal(state.triggers.length, 7);
   assert.equal(state.triggers[0].handler, 'unrelated');
   assert.deepEqual(state.triggers.slice(1).map((trigger) => [trigger.handler, trigger.hour, trigger.zone]),
-    [7, 12, 18].map((hour) => ['syncLinearToGoogleCalendar', hour, 'Asia/Tokyo']));
+    [6, 9, 12, 15, 18, 21].map((hour) => ['syncLinearToGoogleCalendar', hour, 'Asia/Tokyo']));
   api.resetSyncTriggers();
-  assert.equal(state.triggers.length, 4);
+  assert.equal(state.triggers.length, 7);
   api.removeSyncTriggers();
   assert.equal(state.triggers.length, 1);
+});
+
+for (const previousSchedule of [undefined, 'Asia/Tokyo:7,12,18', 'UTC:6,9,12,15,18,21']) {
+  test(`次の同期で未記録・時刻・タイムゾーン変更を反映し、再同期では作り直さない: ${previousSchedule}`, () => {
+    const { api, state } = harness();
+    state.userProperties.SYNC_TRIGGER_SCHEDULE = previousSchedule;
+    state.triggers = ['unrelated', 'syncLinearToGoogleCalendar', 'syncLinearToGoogleTasks']
+      .map((handler) => ({ handler, getHandlerFunction: () => handler }));
+    const unrelated = state.triggers[0];
+    api.syncLinearToGoogleCalendar();
+    assert.equal(state.triggers[0], unrelated);
+    assert.deepEqual(state.triggers.slice(1).map((trigger) => [trigger.handler, trigger.hour, trigger.zone]),
+      [6, 9, 12, 15, 18, 21].map((hour) => ['syncLinearToGoogleCalendar', hour, 'Asia/Tokyo']));
+    const installed = [...state.triggers];
+    api.syncLinearToGoogleCalendar();
+    assert.deepEqual(state.triggers, installed);
+    assert.equal(state.triggerCreates, 6);
+  });
+}
+
+test('停止後に手動同期してもトリガーを復活させない', () => {
+  const { api, state } = harness();
+  api.resetSyncTriggers();
+  api.removeSyncTriggers();
+  state.userProperties.SYNC_TRIGGER_SCHEDULE = 'Asia/Tokyo:7,12,18';
+  api.syncLinearToGoogleCalendar();
+  assert.equal(state.triggers.length, 0);
+  assert.equal(state.triggerCreates, 6);
+});
+
+test('新トリガーの作成失敗時は旧時刻を残し、次回同期で再試行する', () => {
+  const { api, state } = harness();
+  state.triggers = [7, 12, 18].map((hour) => ({
+    hour, getHandlerFunction: () => 'syncLinearToGoogleCalendar',
+  }));
+  const previous = [...state.triggers];
+  state.userProperties.SYNC_TRIGGER_SCHEDULE = 'Asia/Tokyo:7,12,18';
+  state.triggerCreateFailAt = 3;
+  assert.throws(() => api.syncLinearToGoogleCalendar(), /Trigger creation failed/);
+  assert.deepEqual(state.triggers, previous);
+  assert.equal(state.userProperties.SYNC_TRIGGER_SCHEDULE, 'Asia/Tokyo:7,12,18');
+  api.syncLinearToGoogleCalendar();
+  assert.deepEqual(state.triggers.map((trigger) => trigger.hour), [6, 9, 12, 15, 18, 21]);
+});
+
+test('トリガーの件数が不足した場合は次回同期で修復する', () => {
+  const { api, state } = harness();
+  api.resetSyncTriggers();
+  state.triggers.pop();
+  api.syncLinearToGoogleCalendar();
+  assert.deepEqual(state.triggers.map((trigger) => trigger.hour), [6, 9, 12, 15, 18, 21]);
+});
+
+test('旧トリガーの削除途中で失敗しても、次回同期で重複を整理する', () => {
+  const { api, state } = harness();
+  api.resetSyncTriggers();
+  state.userProperties.SYNC_TRIGGER_SCHEDULE = 'Asia/Tokyo:7,12,18';
+  const deleteTrigger = api.ScriptApp.deleteTrigger;
+  let calls = 0;
+  api.ScriptApp.deleteTrigger = (trigger) => {
+    if (++calls === 2) throw new Error('Trigger deletion failed');
+    deleteTrigger(trigger);
+  };
+  assert.throws(() => api.syncLinearToGoogleCalendar(), /Trigger deletion failed/);
+  api.syncLinearToGoogleCalendar();
+  assert.deepEqual(state.triggers.map((trigger) => trigger.hour), [6, 9, 12, 15, 18, 21]);
 });
 
 test('保存カレンダーが利用不能なら停止し、再作成しない', () => {
@@ -245,7 +322,7 @@ test('初回同期失敗後は旧同期が停止し、再セットアップで�
   assert.equal(state.triggers.length, 0);
   state.writeFail = false;
   api.setupSync();
-  assert.equal(state.triggers.length, 3);
+  assert.equal(state.triggers.length, 6);
   assert.equal(state.events.length, 1);
 });
 

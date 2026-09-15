@@ -48,14 +48,16 @@
 ## Public functions / Schedule
 
 - `previewLinearTasks()`: 読み取り専用で同期対象の判定を表示する。
-- `syncLinearToGoogleCalendar()`: 既存の専用カレンダーへ同期する。
-- `setupSync()`: 接続確認・必要ならカレンダー作成、旧新トリガー削除、初回同期、3件のトリガー作成。
+- `syncLinearToGoogleCalendar()`: 既存の専用カレンダーへ同期し、成功後に稼働中の同期トリガーの時刻変更を反映する。
+- `setupSync()`: 接続確認・必要ならカレンダー作成、旧新トリガー削除、初回同期、6件のトリガー作成。
 - `resetSyncTriggers()`: 同期せずトリガーだけ再設定。
 - `removeSyncTriggers()`: 同期用トリガーだけ停止。
 
-Asia/Tokyo の07:00 / 12:00 / 18:00頃。厳密な分単位の実行を前提にしない。時刻は CONFIG に集約し、変更時は README も更新する。
+Asia/Tokyo の06:00 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00頃に約3時間おき・1日6回。厳密な分単位の実行を前提にしない。時刻は CONFIG に集約し、変更時は README も更新する。
 
 トリガー操作は旧 `syncLinearToGoogleTasks` と新 `syncLinearToGoogleCalendar` だけを対象とし、他の関数のトリガーを変更しない。同じアカウントの再実行で重複させない。別アカウントのトリガーを操作できない制約を移行手順に記載する。
+
+時刻・タイムゾーンの変更は次の定期同期成功時に反映する。反映済み設定はユーザー プロパティ `SYNC_TRIGGER_SCHEDULE` に保存する。停止中のトリガーを手動同期で復活させない。時刻変更時は新トリガーの作成成功後に旧トリガーを削除し、作成失敗時は作成途中のものを片付けて旧トリガーを維持する。
 
 ## Security
 
@@ -80,5 +82,7 @@ Asia/Tokyo の07:00 / 12:00 / 18:00頃。厳密な分単位の実行を前提に
 - Web editor で修正した場合は、ローカル編集前に `clasp pull` と差分確認を行う。編集中ファイルを上書きしない。
 - `clasp push` 前に差分と新規ファイルを確認する。manifest / Script ID / credential の意図しない変更を送信しない。
 - `.claspignore` でコードとマニフェストだけを送信し、テストを本番に含めない。
+- GitHub Actionsはmain向けPRでテストし、mainへのpushではテスト成功後に `clasp push --force` する。反映を直列化し、古いmainコミットは送信しない。
+- ActionsのOAuth認証はRepository secret `CLASPRC_JSON` に保存する。Linear API KeyとカレンダーIDは引き続きスクリプト プロパティに置く。自動反映では本番関数を直接実行しない。
 - 既存コードを先に読み、既知の設定値を再質問しない。要求範囲外の機能を追加しない。
 - 変更後は影響範囲、検証結果、残る手動設定を簡潔に報告する。
