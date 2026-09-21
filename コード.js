@@ -7,7 +7,6 @@ const CONFIG = Object.freeze({
   SYNC_HOURS: [6, 9, 12, 15, 18, 21],
   SYNC_SOURCE: 'linear-life-calendar-v1',
   CALENDAR_RANGE_LABEL: 'Calendar Range',
-  CALENDAR_RANGE_START_STATE: 'Todo',
 });
 
 /** Requires LINEAR_API_KEY and the Advanced Calendar service (v3).
@@ -232,23 +231,9 @@ function formatLinearTimestampDate_(timestamp, issue) {
 
 function getCalendarStartDate_(issue) {
   if (!hasCalendarRangeLabel_(issue)) return issue.dueDate;
-
-  const history = issue.stateHistory;
-  if (!history || !Array.isArray(history.nodes) || !history.pageInfo ||
-      typeof history.pageInfo.hasNextPage !== 'boolean') {
-    throw new Error(`Incomplete Linear state history for ${issue.identifier}. Sync stopped.`);
-  }
-  if (history.pageInfo.hasNextPage) {
-    throw new Error(`Linear state history exceeds the fetched page for ${issue.identifier}. Sync stopped.`);
-  }
-
-  const todoStarts = history.nodes
-    .filter((span) => span && span.state &&
-      span.state.name === CONFIG.CALENDAR_RANGE_START_STATE && span.startedAt)
-    .map((span) => span.startedAt)
-    .sort();
-  const timestamp = todoStarts.at(-1) || issue.startedAt || issue.createdAt;
-  const startDate = formatLinearTimestampDate_(timestamp, issue);
+  // Before work starts, keep the ordinary one-day deadline event.
+  if (!issue.startedAt) return issue.dueDate;
+  const startDate = formatLinearTimestampDate_(issue.startedAt, issue);
   // A task first made actionable after its deadline cannot form a forward range.
   return startDate <= issue.dueDate ? startDate : issue.dueDate;
 }
@@ -304,7 +289,6 @@ function fetchLifeIssuesFromLinear_() {
             identifier
             title
             url
-            createdAt
             startedAt
             dueDate
             priority
@@ -315,19 +299,6 @@ function fetchLifeIssuesFromLinear_() {
             labels {
               nodes {
                 name
-              }
-            }
-            stateHistory(first: 100) {
-              nodes {
-                state {
-                  name
-                  type
-                }
-                startedAt
-                endedAt
-              }
-              pageInfo {
-                hasNextPage
               }
             }
           }

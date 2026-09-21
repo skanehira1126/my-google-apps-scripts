@@ -7,9 +7,9 @@ const copy = (value) => JSON.parse(JSON.stringify(value));
 const issue = (overrides = {}) => ({
   id: 'issue-1', identifier: 'MIH-123', title: '買い物',
   url: 'https://linear.app/example/issue/MIH-123', dueDate: '2026-09-10',
-  createdAt: '2026-09-01T00:00:00.000Z', startedAt: null,
+  startedAt: null,
   state: { type: 'unstarted', name: 'Todo' }, labels: { nodes: [] },
-  stateHistory: { nodes: [], pageInfo: { hasNextPage: false } }, ...overrides,
+  ...overrides,
 });
 function harness() {
   const state = {
@@ -135,54 +135,35 @@ test('終日イベントの日付境界、表示、通知なし', () => {
   assert.throws(() => api.buildCalendarEvent_(issue({ dueDate: '2026-02-30' })), /Invalid due date/);
 });
 
-test('Calendar Rangeラベルは最新のTodo開始日から期限日までの帯にする', () => {
+test('Calendar RangeラベルはIn Progress開始日から期限日までの帯にする', () => {
   const { api } = harness();
   const item = issue({
     labels: { nodes: [{ name: 'Calendar Range' }] },
     state: { type: 'started', name: 'In Progress' },
     startedAt: '2026-09-05T15:00:00.000Z',
-    stateHistory: {
-      nodes: [
-        { state: { name: 'Todo', type: 'unstarted' }, startedAt: '2026-08-30T15:00:00.000Z', endedAt: '2026-09-01T00:00:00.000Z' },
-        { state: { name: 'Todo', type: 'unstarted' }, startedAt: '2026-09-02T15:00:00.000Z', endedAt: '2026-09-05T15:00:00.000Z' },
-      ],
-      pageInfo: { hasNextPage: false },
-    },
   });
   const event = api.buildCalendarEvent_(item);
-  assert.equal(event.start.date, '2026-09-03');
+  assert.equal(event.start.date, '2026-09-06');
   assert.equal(event.end.date, '2026-09-11');
 });
 
-test('Calendar RangeラベルはTodo履歴がなければ着手日時、作成日時の順に使う', () => {
+test('Calendar Rangeラベルがあっても未着手なら期限当日の単日予定にする', () => {
   const { api } = harness();
-  const label = { nodes: [{ name: 'Calendar Range' }] };
-  assert.equal(api.buildCalendarEvent_(issue({
-    labels: label,
-    state: { type: 'started', name: 'In Progress' },
-    startedAt: '2026-09-04T15:00:00.000Z',
-  })).start.date, '2026-09-05');
-  assert.equal(api.buildCalendarEvent_(issue({ labels: label })).start.date, '2026-09-01');
+  const event = api.buildCalendarEvent_(issue({
+    labels: { nodes: [{ name: 'Calendar Range' }] },
+  }));
+  assert.equal(event.start.date, '2026-09-10');
+  assert.equal(event.end.date, '2026-09-11');
 });
 
 test('Calendar Rangeの開始が期限後なら期限当日の単日予定にする', () => {
   const { api } = harness();
   const event = api.buildCalendarEvent_(issue({
     labels: { nodes: [{ name: 'Calendar Range' }] },
-    createdAt: '2026-09-11T00:00:00.000Z',
+    startedAt: '2026-09-11T00:00:00.000Z',
   }));
   assert.equal(event.start.date, '2026-09-10');
   assert.equal(event.end.date, '2026-09-11');
-});
-
-test('Calendar Rangeの状態履歴が不完全なら同期を停止する', () => {
-  const { api, state } = harness();
-  state.issues[0] = issue({
-    labels: { nodes: [{ name: 'Calendar Range' }] },
-    stateHistory: { nodes: [], pageInfo: { hasNextPage: true } },
-  });
-  assert.throws(() => api.syncLinearToGoogleCalendar(), /state history exceeds/);
-  assert.deepEqual(state.writes, []);
 });
 
 test('全ページ取得、2回同期の冪等性、同じイベントの期限・タイトル更新', () => {
@@ -211,11 +192,8 @@ test('Calendar Rangeラベルの追加で同じイベントを期間表示へ更
   const id = state.events[0].id;
   state.writes = [];
   state.issues[0].labels.nodes.push({ name: 'Calendar Range' });
-  state.issues[0].stateHistory.nodes.push({
-    state: { name: 'Todo', type: 'unstarted' },
-    startedAt: '2026-09-02T00:00:00.000Z',
-    endedAt: null,
-  });
+  state.issues[0].state = { type: 'started', name: 'In Progress' };
+  state.issues[0].startedAt = '2026-09-02T00:00:00.000Z';
   api.syncLinearToGoogleCalendar();
   assert.equal(state.events[0].id, id);
   assert.equal(state.events[0].start.date, '2026-09-02');

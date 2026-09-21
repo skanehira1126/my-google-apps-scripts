@@ -1,6 +1,6 @@
 # Linear → Google Calendar Sync
 
-Linear の `Life` Project にある、**期限付き・未完了の自分のタスク**を、専用の Google カレンダー `Linear` に終日イベントとして同期する Google Apps Script です。通常は期限当日、`Calendar Range` ラベル付きタスクは Todo になった日から期限日まで表示し、iPhone 標準のカレンダーアプリから確認できます。
+Linear の `Life` Project にある、**期限付き・未完了の自分のタスク**を、専用の Google カレンダー `Linear` に終日イベントとして同期する Google Apps Script です。通常は期限当日、`Calendar Range` ラベル付きで着手済みのタスクは In Progress になった日から期限日まで表示し、iPhone 標準のカレンダーアプリから確認できます。
 
 Linear をタスクの正本とし、タイトル・状態・期限・担当の変更は Linear で行います。Google カレンダーから Linear への逆同期はありません。
 
@@ -28,7 +28,7 @@ iPhone カレンダー
 | Linear の条件 | カレンダーでの動作 |
 |---|---|
 | 期限あり、state type が `unstarted` または `started` | 期限当日に作成・必要な差分だけ更新 |
-| 上記かつ `Calendar Range` ラベルあり | 最新の Todo 開始日から期限日までの複数日終日イベント。Todo 履歴がなければ In Progress 開始日時、さらに作成日時へフォールバック |
+| 上記かつ `Calendar Range` ラベルあり | In Progress 開始日から期限日までの複数日終日イベント。未着手なら期限当日の単日イベント |
 | Waiting / Needs Review ラベルあり | 上記条件を満たせば同期 |
 | Backlog | 登録しない。同期済みイベントは削除 |
 | Done / Canceled | 同期済みイベントを削除 |
@@ -41,7 +41,7 @@ iPhone カレンダー
 
 - タイトル: `[MIH-123] タイトル`
 - 説明: Linear Issue へのリンク、状態、ラベル
-- 日付: 通常は期限当日の1日だけ。`Calendar Range` ラベル付きは Todo になった日から期限日までの複数日終日イベント
+- 日付: 通常は期限当日の1日だけ。`Calendar Range` ラベル付きで着手済みなら In Progress になった日から期限日までの複数日終日イベント
 - 予定の表示: 空き時間（他の予定を塞がない）
 - 通知: なし
 
@@ -124,7 +124,7 @@ Linear を読み取り、専用カレンダーの作成または接続確認を�
 完了後は次を確認します。
 
 - ログに `Setup complete.` が表示されている。
-- Google カレンダーに `Linear` があり、通常タスクは期限当日、`Calendar Range` 付きタスクは Todo 開始日から期限日まで表示される。
+- Google カレンダーに `Linear` があり、通常タスクは期限当日、`Calendar Range` 付きの着手済みタスクは In Progress 開始日から期限日まで表示される。
 - 左側の **トリガー**（時計アイコン）に `syncLinearToGoogleCalendar` が6件ある。
 - スクリプト プロパティに `GOOGLE_CALENDAR_ID` が保存されている。
 
@@ -148,7 +148,7 @@ Linear を読み取り、専用カレンダーの作成または接続確認を�
 1. iPhone の **設定 → アプリ → カレンダー → カレンダーアカウント** を開きます（iOS により項目名は異なります）。
 2. Life KB で使う Google アカウントを追加するか、既存アカウントの **カレンダー** を有効にします。
 3. 標準のカレンダーアプリを開き、画面下の **カレンダー** から Google アカウント配下の **Linear** にチェックを入れます。
-4. 同期を待ち、通常タスクはLinearで指定した期限日、`Calendar Range` 付きタスクはTodo開始日から期限日まで終日イベントが表示されることを確認します。
+4. 同期を待ち、通常タスクはLinearで指定した期限日、`Calendar Range` 付きの着手済みタスクはIn Progress開始日から期限日まで終日イベントが表示されることを確認します。
 
 反映には Google と iPhone 間の同期時間もかかります。([Googleの設定手順](https://support.google.com/calendar/answer/99358?co=GENIE.Platform%3DiOS&hl=ja))
 
