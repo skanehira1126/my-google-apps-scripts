@@ -7,7 +7,9 @@ const copy = (value) => JSON.parse(JSON.stringify(value));
 const issue = (overrides = {}) => ({
   id: 'issue-1', identifier: 'MIH-123', title: '買い物',
   url: 'https://linear.app/example/issue/MIH-123', dueDate: '2026-09-10',
-  state: { type: 'unstarted', name: 'Todo' }, labels: { nodes: [] }, ...overrides,
+  startedAt: null,
+  state: { type: 'unstarted', name: 'Todo' }, labels: { nodes: [] },
+  ...overrides,
 });
 function harness() {
   const state = {
@@ -31,7 +33,15 @@ function harness() {
     LockService: { getScriptLock: () => ({
       tryLock: () => !state.locked, releaseLock: () => { state.releases++; },
     }) },
-    Utilities: { sleep: (duration) => state.sleeps.push(duration) },
+    Utilities: {
+      sleep: (duration) => state.sleeps.push(duration),
+      formatDate: (date, zone) => {
+        assert.equal(zone, 'Asia/Tokyo');
+        return new Intl.DateTimeFormat('sv-SE', {
+          timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(date);
+      },
+    },
     UrlFetchApp: { fetch: (_url, options) => {
       const { variables } = JSON.parse(options.payload);
       const index = variables.after ? Number(variables.after) : 0;
@@ -125,6 +135,37 @@ test('終日イベントの日付境界、表示、通知なし', () => {
   assert.throws(() => api.buildCalendarEvent_(issue({ dueDate: '2026-02-30' })), /Invalid due date/);
 });
 
+test('Calendar RangeラベルはIn Progress開始日から期限日までの帯にする', () => {
+  const { api } = harness();
+  const item = issue({
+    labels: { nodes: [{ name: 'Calendar Range' }] },
+    state: { type: 'started', name: 'In Progress' },
+    startedAt: '2026-09-05T15:00:00.000Z',
+  });
+  const event = api.buildCalendarEvent_(item);
+  assert.equal(event.start.date, '2026-09-06');
+  assert.equal(event.end.date, '2026-09-11');
+});
+
+test('Calendar Rangeラベルがあっても未着手なら期限当日の単日予定にする', () => {
+  const { api } = harness();
+  const event = api.buildCalendarEvent_(issue({
+    labels: { nodes: [{ name: 'Calendar Range' }] },
+  }));
+  assert.equal(event.start.date, '2026-09-10');
+  assert.equal(event.end.date, '2026-09-11');
+});
+
+test('Calendar Rangeの開始が期限後なら期限当日の単日予定にする', () => {
+  const { api } = harness();
+  const event = api.buildCalendarEvent_(issue({
+    labels: { nodes: [{ name: 'Calendar Range' }] },
+    startedAt: '2026-09-11T00:00:00.000Z',
+  }));
+  assert.equal(event.start.date, '2026-09-10');
+  assert.equal(event.end.date, '2026-09-11');
+});
+
 test('全ページ取得、2回同期の冪等性、同じイベントの期限・タイトル更新', () => {
   const { api, state } = harness();
   state.issues.push(issue({ id: 'issue-2' }));
@@ -142,6 +183,20 @@ test('全ページ取得、2回同期の冪等性、同じイベントの期限�
   assert.equal(state.events[0].id, id);
   assert.equal(state.events[0].end.date, '2027-01-01');
   assert.equal(state.events[0].summary, '[MIH-123] 変更後');
+  assert.deepEqual(state.writes, ['patch']);
+});
+
+test('Calendar Rangeラベルの追加で同じイベントを期間表示へ更新する', () => {
+  const { api, state } = harness();
+  api.syncLinearToGoogleCalendar();
+  const id = state.events[0].id;
+  state.writes = [];
+  state.issues[0].labels.nodes.push({ name: 'Calendar Range' });
+  state.issues[0].state = { type: 'started', name: 'In Progress' };
+  state.issues[0].startedAt = '2026-09-02T00:00:00.000Z';
+  api.syncLinearToGoogleCalendar();
+  assert.equal(state.events[0].id, id);
+  assert.equal(state.events[0].start.date, '2026-09-02');
   assert.deepEqual(state.writes, ['patch']);
 });
 

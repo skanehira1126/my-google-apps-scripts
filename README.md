@@ -1,6 +1,6 @@
 # Linear → Google Calendar Sync
 
-Linear の `Life` Project にある、**期限付き・未完了の自分のタスク**を、専用の Google カレンダー `Linear` に終日イベントとして同期する Google Apps Script です。iPhone 標準のカレンダーアプリから期限を確認できます。
+Linear の `Life` Project にある、**期限付き・未完了の自分のタスク**を、専用の Google カレンダー `Linear` に終日イベントとして同期する Google Apps Script です。通常は期限当日、`Calendar Range` ラベル付きで着手済みのタスクは In Progress になった日から期限日まで表示し、iPhone 標準のカレンダーアプリから確認できます。
 
 Linear をタスクの正本とし、タイトル・状態・期限・担当の変更は Linear で行います。Google カレンダーから Linear への逆同期はありません。
 
@@ -16,7 +16,7 @@ Linear をタスクの正本とし、タイトル・状態・期限・担当の�
 ```text
 Linear / Life Project（正本）
     ↓ Google Apps Scriptで定期同期
-Google Calendar / Linear（期限当日の終日イベント）
+Google Calendar / Linear（期限当日または作業可能期間の終日イベント）
     ↓ Googleアカウントのカレンダー同期
 iPhone カレンダー
 ```
@@ -28,6 +28,7 @@ iPhone カレンダー
 | Linear の条件 | カレンダーでの動作 |
 |---|---|
 | 期限あり、state type が `unstarted` または `started` | 期限当日に作成・必要な差分だけ更新 |
+| 上記かつ `Calendar Range` ラベルあり | In Progress 開始日から期限日までの複数日終日イベント。未着手なら期限当日の単日イベント |
 | Waiting / Needs Review ラベルあり | 上記条件を満たせば同期 |
 | Backlog | 登録しない。同期済みイベントは削除 |
 | Done / Canceled | 同期済みイベントを削除 |
@@ -40,11 +41,11 @@ iPhone カレンダー
 
 - タイトル: `[MIH-123] タイトル`
 - 説明: Linear Issue へのリンク、状態、ラベル
-- 日付: 期限当日の1日だけの終日イベント
+- 日付: 通常は期限当日の1日だけ。`Calendar Range` ラベル付きで着手済みなら In Progress になった日から期限日までの複数日終日イベント
 - 予定の表示: 空き時間（他の予定を塞がない）
 - 通知: なし
 
-終日イベントの終了日は API 上では翌日を指定します。時刻への変換による日付ずれを避け、日付のまま扱います。([Calendar API](https://developers.google.com/workspace/calendar/api/v3/reference/events))
+終日イベントの終了日は API 上では翌日を指定します。Linear の状態日時は `Asia/Tokyo` の日付へ変換し、それ以外は時刻へ変換せず日付のまま扱います。`Calendar Range` の開始日が期限より後なら、期限当日の単日予定にします。([Calendar API](https://developers.google.com/workspace/calendar/api/v3/reference/events))
 
 専用カレンダー内でも、非公開拡張プロパティの `syncSource=linear-life-calendar-v1` と `linearIssueId` があるイベントだけを更新・削除します。手動作成イベントや別の同期元のイベントには触れません。([拡張プロパティ](https://developers.google.com/workspace/calendar/api/guides/extended-properties))
 
@@ -108,7 +109,9 @@ Apps Script の **プロジェクトの設定 → スクリプト プロパテ�
 
 エディタ上部の関数選択で **`previewLinearTasks`**（先頭は小文字）を選び、「実行」を押します。Google アカウントを選んで要求された権限を確認・承認し、必要なら再実行します。
 
-実行ログで、期限付きの未着手・進行中タスクが `actionable: true`、Backlog・Done・Canceled・期限なしが `false` になることを確認します。Waiting ラベルだけでは `false` になりません。
+実行ログで、期限付きの未着手・進行中タスクが `actionable: true`、Backlog・Done・Canceled・期限なしが `false` になることを確認します。`calendarStartDate` には実際にカレンダーへ投影する開始日が表示されます。Waiting ラベルだけでは `false` になりません。
+
+複数日の帯で表示したいIssueには、Linearで `Calendar Range` ラベルを作成して付与します。ラベルを外すと、次回同期で同じイベントが期限当日の単日予定へ戻ります。
 
 この関数は読み取り専用です。カレンダーの作成やイベントの更新は行いません。
 
@@ -121,7 +124,7 @@ Linear を読み取り、専用カレンダーの作成または接続確認を�
 完了後は次を確認します。
 
 - ログに `Setup complete.` が表示されている。
-- Google カレンダーに `Linear` があり、期限当日の終日イベントが表示される。
+- Google カレンダーに `Linear` があり、通常タスクは期限当日、`Calendar Range` 付きの着手済みタスクは In Progress 開始日から期限日まで表示される。
 - 左側の **トリガー**（時計アイコン）に `syncLinearToGoogleCalendar` が6件ある。
 - スクリプト プロパティに `GOOGLE_CALENDAR_ID` が保存されている。
 
@@ -145,7 +148,7 @@ Linear を読み取り、専用カレンダーの作成または接続確認を�
 1. iPhone の **設定 → アプリ → カレンダー → カレンダーアカウント** を開きます（iOS により項目名は異なります）。
 2. Life KB で使う Google アカウントを追加するか、既存アカウントの **カレンダー** を有効にします。
 3. 標準のカレンダーアプリを開き、画面下の **カレンダー** から Google アカウント配下の **Linear** にチェックを入れます。
-4. 同期を待ち、Linear で指定した期限日に終日イベントが表示されることを確認します。
+4. 同期を待ち、通常タスクはLinearで指定した期限日、`Calendar Range` 付きの着手済みタスクはIn Progress開始日から期限日まで終日イベントが表示されることを確認します。
 
 反映には Google と iPhone 間の同期時間もかかります。([Googleの設定手順](https://support.google.com/calendar/answer/99358?co=GENIE.Platform%3DiOS&hl=ja))
 
