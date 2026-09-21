@@ -6,6 +6,8 @@ const CONFIG = Object.freeze({
   TIMEZONE: 'Asia/Tokyo',
   SYNC_HOURS: [6, 9, 12, 15, 18, 21],
   SYNC_SOURCE: 'linear-life-calendar-v1',
+  CALENDAR_RANGE_LABEL: 'Calendar Range',
+  CALENDAR_RANGE_START_STATE: 'Todo',
 });
 
 /** Requires LINEAR_API_KEY and the Advanced Calendar service (v3).
@@ -202,6 +204,7 @@ function previewLinearTasks() {
     dueDate: issue.dueDate || null,
     labels: getLabelNames_(issue),
     actionable: isActionableIssue_(issue),
+    calendarStartDate: isActionableIssue_(issue) ? getCalendarStartDate_(issue) : null,
   }));
   console.log(JSON.stringify(preview, null, 2));
 }
@@ -215,6 +218,41 @@ function getLabelNames_(issue) {
   return ((issue.labels && issue.labels.nodes) || []).map((label) => label.name);
 }
 
+function hasCalendarRangeLabel_(issue) {
+  return getLabelNames_(issue).includes(CONFIG.CALENDAR_RANGE_LABEL);
+}
+
+function formatLinearTimestampDate_(timestamp, issue) {
+  const date = new Date(timestamp);
+  if (!timestamp || !Number.isFinite(date.getTime())) {
+    throw new Error(`Invalid Linear state timestamp for ${issue.identifier}. Sync stopped.`);
+  }
+  return Utilities.formatDate(date, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+}
+
+function getCalendarStartDate_(issue) {
+  if (!hasCalendarRangeLabel_(issue)) return issue.dueDate;
+
+  const history = issue.stateHistory;
+  if (!history || !Array.isArray(history.nodes) || !history.pageInfo ||
+      typeof history.pageInfo.hasNextPage !== 'boolean') {
+    throw new Error(`Incomplete Linear state history for ${issue.identifier}. Sync stopped.`);
+  }
+  if (history.pageInfo.hasNextPage) {
+    throw new Error(`Linear state history exceeds the fetched page for ${issue.identifier}. Sync stopped.`);
+  }
+
+  const todoStarts = history.nodes
+    .filter((span) => span && span.state &&
+      span.state.name === CONFIG.CALENDAR_RANGE_START_STATE && span.startedAt)
+    .map((span) => span.startedAt)
+    .sort();
+  const timestamp = todoStarts.at(-1) || issue.startedAt || issue.createdAt;
+  const startDate = formatLinearTimestampDate_(timestamp, issue);
+  // A task first made actionable after its deadline cannot form a forward range.
+  return startDate <= issue.dueDate ? startDate : issue.dueDate;
+}
+
 function buildCalendarEvent_(issue) {
   const date = new Date(`${issue.dueDate}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issue.dueDate) ||
@@ -223,6 +261,7 @@ function buildCalendarEvent_(issue) {
   }
   date.setUTCDate(date.getUTCDate() + 1);
   const labels = getLabelNames_(issue);
+  const startDate = getCalendarStartDate_(issue);
   return {
     summary: `[${issue.identifier}] ${issue.title}`,
     description: [
@@ -232,7 +271,7 @@ function buildCalendarEvent_(issue) {
       labels.length ? `Labels: ${labels.join(', ')}` : null,
       `URL: ${issue.url}`,
     ].filter(Boolean).join('\n'),
-    start: { date: issue.dueDate },
+    start: { date: startDate },
     end: { date: date.toISOString().slice(0, 10) },
     transparency: 'transparent',
     reminders: { useDefault: false, overrides: [] },
@@ -265,6 +304,8 @@ function fetchLifeIssuesFromLinear_() {
             identifier
             title
             url
+            createdAt
+            startedAt
             dueDate
             priority
             state {
@@ -274,6 +315,19 @@ function fetchLifeIssuesFromLinear_() {
             labels {
               nodes {
                 name
+              }
+            }
+            stateHistory(first: 100) {
+              nodes {
+                state {
+                  name
+                  type
+                }
+                startedAt
+                endedAt
+              }
+              pageInfo {
+                hasNextPage
               }
             }
           }
